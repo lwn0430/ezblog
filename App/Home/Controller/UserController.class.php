@@ -1,0 +1,195 @@
+<?php
+//前台会员管理控制器
+class UserController extends Controller
+{
+    //显示会员注册表单动作
+    public function registerAction()
+    {
+        $this->display('register.html');
+    }
+    //处理会员注册动作
+    public function dealRegisterAction()
+    {
+        //接收数据
+        $userInfo=array();
+        $user_name=$_POST['user_name'];
+        //判断用户名是否为空
+        if(empty($user_name))
+        {
+            $this->jump('index.php?p=Home&c=User&a=register',':(用户名不能为空!');
+        }
+        //判断用户名是否超出长度
+        if(strlen($user_name)>10||strlen($user_name)<6)
+        {
+            $this->jump('index.php?p=Home&c=User&a=register',':(用户名超出范围!');
+        }
+        //判断用户名是否一已经存在
+        //调用模型
+        $user=Factory::M('UserModel');
+        if($user->if_name_exists($user_name))
+        {
+            //用户已经存在
+            $this->jump('index.php?p=Home&c=User&a=register',':(用户名已经存在!');
+        }
+        $userInfo['user_name']=$user_name;
+        //判断密码是否一致
+        $user_pass1=trim($_POST['user_password1']);
+        $user_pass2=trim($_POST['user_password2']);
+        if(empty($user_pass1) || empty($user_pass2))
+        {
+            $this->jump('index.php?p=Home&c=User&a=register',':(密码不能为空!');
+        }
+        if(strlen($user_pass1)>10||strlen($user_pass1)<6)
+        {
+            $this->jump('index.php?p=Home&c=User&a=register',':(密码超出范围!');
+        }
+        if($user_pass1!==$user_pass2)
+        {
+            $this->jump('index.php?p=Home&c=User&a=register',':(两次密码不一致!');
+        }
+        $userInfo['user_pass']=md5($user_pass1);
+        //增加验证码的判断
+        $passcode=trim($_POST['vcode']);
+        $captcha=Factory::M('Captcha');
+        if(!$captcha->checkCaptcha($passcode))
+        {
+            //验证码非法，跳转
+            $this->jump('index.php?p=Home&c=User&a=register',':(验证码错误！');
+        }
+        //调用模型，数据入库
+        $result=$user->insertUser($userInfo);
+        if($result)
+        {
+            //太不合适了，不符合人性的需求，不是一定要发帖的
+            $this->jump('index.php?p=Home&c=User&a=login',':)注册成功!');
+        }else{
+            $this->jump('index.php?p=Home&c=User&a=register',':(发生未知错误，注册失败!');
+        }
+    }
+    //显示会员登录表单动作
+    public function loginAction()
+    {
+        session_start();
+        //判断是否设置了user_id这个cookie变量
+        if(isset($_COOKIE['user_id']) && isset($_SESSION['userInfo']))
+        {
+            //说明用户设置了七天免登录并且没有过期
+            //直接跳到发帖界面      
+            $this->jump('index.php?p=Home&c=Publish&a=index');
+        }
+        else{
+            $this->display('login.html');
+        }
+        
+    }
+    //处理会员登录动作
+    public function dealLoginAction()
+    {
+        //接收数据
+        $user_name=$_POST['user_name'];
+        $user_pass=trim($_POST['user_pass']);
+        if(empty($user_name) || empty($user_pass))
+        {
+            $this->jump('index.php?p=Home&c=User&a=login',':(用户名和密码都不能为空!');
+        }
+        //判断用户名和密码是否合法
+        $user=Factory::M('UserModel');
+        $result=$user->check($user_name,md5($user_pass));
+        if($result)
+        {
+            //验证成功 判断用户是否勾选了“七天免登录”
+            if(isset($_POST['remember']))
+            {
+                //说明用户勾选了
+                setCookie('user_id',$result['user_id'],time()+604800,'/');
+            }
+            //将用户信息存储到session中
+            @session_start();
+            $_SESSION['userInfo']=$result;   //数组信息
+            $this->jump('index.php?p=Home&c=Index&a=index');
+        }else{
+            $this->jump('index.php?p=Home&c=User&a=login',':(用户名或密码错误!');
+        }
+    }
+    //logout用户退出动作
+    public function logoutAction()
+    {
+        //删除cookie数据
+        setcookie('user_id','',time()-1,'/');
+        //删除session数据
+        session_start();
+        $_SESSION=array();
+        session_destroy();
+        //跳转
+        $this->jump('index.php?p=Home&c=Index&a=index');
+    }
+    //获取验证码
+    public function captchaAction()
+    {
+        //实例化验证码类
+        $captcha=Factory::M('Captcha');
+        $captcha->generate();
+    }
+    //上传头像的view
+    public function imageAction()
+    {
+        //判断用户是否登录
+        @session_start();
+        if(!isset($_COOKIE['user_id']))
+        {
+            if(!isset($_SESSION['userInfo']))
+            {
+                $this->jump('index.php?p=Home&c=Index&a=index',':(请您先登录!');
+            }
+        }
+        $this->display('image.html');
+    }
+    //上传头像动作
+    public function uploadImageAction()
+    {
+        if($_FILES['image']['error']!=4)
+        {
+            //说明用户选择了上传文件，实例化上传类
+            $upload=Factory::M('Upload');
+            //初始化相关参数
+            $allow=array('image/jpeg','image/png','image/gif','image/jpg');
+            $path=UPLOADS_DIR.'user';
+            //调用uploadAction方法
+            $result=$upload->uploadAction($_FILES['image'],$allow,$path);
+            //判断是否上传成功
+            if($result)
+            {   
+                //接收表单
+                $userInfo=array();
+                session_start();
+                $user_name=$_SESSION['userInfo']['user_name'];
+                $userInfo['user_name']=$user_name;
+                //提取旧头像名
+                $user=Factory::M('UserModel');
+                $old_name=$user->get_oldImage_name($user_name);
+                //新头像name入库
+                $res=$user->updateUserImage($user_name,$result);
+                //判断是否入库成功
+                if($res)
+                {
+                    //删除原来user文件夹的旧头像
+                    @unlink(UPLOADS_DIR.'user/'.$old_name);        //unlink删除文件，删除目标路径的文件，返回布尔值
+                    //跳转
+                    $this->jump('index.php?p=Home&c=Publish&a=showAllArticle',':)头像上传成功!');
+                }else{
+                    //入库失败
+                    $this->jump('index.php?p=Home&c=User&a=image',':(头像上传失败!');
+                }
+            }
+            else
+            {
+                //记录错误信息并跳转
+                $error=Upload::$error;
+                $this->jump("index.php?p=Home&c=User&a=image",$error);
+            }
+        }else
+        {
+            $this->jump("index.php?p=Home&c=User&a=image",'发生未知错误，上传失败');
+        }
+    }
+}
